@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "toyopuc-10gx"
-version = "0.1.1"
+version = "0.1.2"
 description = "Python communication library for JTEKT TOYOPUC 10GX PLC via Ethernet Computer Link"
 readme = "README.md"
 requires-python = ">=3.8"
@@ -29,7 +29,7 @@ classifiers = [
 dependencies = []
 
 [project.urls]
-Homepage = "https://github.com/calsonic/10gx_connector"
+Homepage = "https://github.com/Motul34/10gx_connector"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/toyopuc"]

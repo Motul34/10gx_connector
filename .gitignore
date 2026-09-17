@@ -10,3 +10,5 @@ dist/
 htmlcov/
 .venv/
 venv/
+docs/
+tests/
