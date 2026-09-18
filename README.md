@@ -1,21 +1,18 @@
 # toyopuc-10gx
 
-JTEKT製PLC **TOYOPUC 10GX**（Nano 2ETモジュール等）と、PCからイーサネット（コンピュータリンク方式 TCP/IP）経由で通信を行うPythonライブラリです。
+JTEKT製PLC（TOYOPUC 10GX / Nano 2ET等）とイーサネット（コンピュータリンク方式 TCP/IP）経由で通信するためのPythonライブラリです。
 
-PyPIパッケージ名: **`toyopuc-10gx`**  
-Pythonインポート名: **`import toyopuc`**
+## 特徴
 
----
+- Python標準ライブラリのみで動作（外部依存パッケージなし）
+- ビット（1bit）、バイト（8bit）、ワード（16bit）、ロング（32bit）の読み書きに対応
+- `P1-M100`、`P2-D2000`、`U0000` などのアドレス表記を自動で32bit論理アドレスに変換
+- 複数アドレスの一括読み書きに対応（コマンド上限127点を超える場合は自動で分割送信）
+- 別スレッドによる定期ポーリングと自動再接続
 
-## 主な特徴
+## 動作要件
 
-- **簡単接続**: `toyopuc.connect(ip, port)` で接続完了。
-- **直感的なアドレス指定**: `"P1-M100"`, `"P2-D2000"`, `"P1-D100L"`, `"U0000"` などのアドレス文字列を自動で32ビット論理アドレス（Ex No.＋間接アドレス）に変換。
-- **戻り値（リスト形式）**: 単一アドレスでも `[0]` で取得でき、複数アドレス（連番・飛び番・混在）も指定した順序のリストで一括取得可能。
-- **全データ幅に対応**: ビット（1bit）、バイト（8bit）、ワード（16bit）、ロング（32bit）の読み書きを完備。
-- **バックグラウンド定期監視（ポーラー機能）**: 別スレッドでの定期取得ループ・自動再接続・排他制御が可能。メインスレッドは通信待ち（ブロッキング）ゼロで最新値を参照。
-
----
+- Python 3.8 以上
 
 ## インストール
 
@@ -23,59 +20,47 @@ Pythonインポート名: **`import toyopuc`**
 pip install toyopuc-10gx
 ```
 
----
+## 基本的な使い方
 
-## クイックスタート
-
-### 1. 基本的な読み書き
+### 接続と読み書き
 
 ```python
 import toyopuc
 
 # PLCに接続（デフォルトポート: 1025, タイムアウト: 3.0秒）
 with toyopuc.connect("192.168.1.1", 1025) as plc:
-    # --- ビットの読み書き ---
-    # 単一書き込み（辞書形式）
-    plc.bit_write({"P1-M100": 1})
+    # ビットの読み書き
+    plc.bit_write("P1-M100", 1)
+    m100 = plc.bit_read("P1-M100")[0]  # 戻り値は常に list[int]
+    print(f"M100: {m100}")
 
-    # 単一読み出し（戻り値はリストなので [0] で取得）
-    m100 = plc.bit_read("P1-M100")[0]
-    print(f"P1-M100: {m100}")  # -> 1
+    # 複数ビットの一括読み書き（連番・飛び番問わず指定可能）
+    plc.bit_write({"P1-M100": 0, "P1-M108": 1})
+    m100, m108 = plc.bit_read("P1-M100", "P1-M108")
 
-    # 複数ビットの一括読み出し（飛び番でもOK）
-    vals = plc.bit_read("P1-M100", "P1-M108")
-    print(vals)  # -> [1, 0]
+    # ワード（16bit）の読み書き
+    plc.word_write("P1-D100", 1234)
+    d100 = plc.word_read("P1-D100")[0]
 
-    # 複数ビットの一括書き込み
-    plc.bit_write({
-        "P1-M100": 0,
-        "P1-M108": 1,
-        "P2-M200": 1,
-    })
-
-    # --- ワード（16bitレジスタ）の読み書き ---
-    plc.word_write({
-        "P1-D100": 1234,
-        "P1-D205": 5678,
-    })
+    # 複数ワードの一括読み出し
     d100, d205 = plc.word_read("P1-D100", "P1-D205")
-    print(f"D100: {d100}, D205: {d205}")
 
-    # --- バイト（8bit）単位の読み書き ---
+    # バイト（8bit）の読み書き（下位バイト: L, 上位バイト: H）
     plc.byte_write({"P1-D100L": 0x34, "P1-D100H": 0x12})
-    byte_vals = plc.byte_read("P1-D100L", "P1-D100H")
+    d100l, d100h = plc.byte_read("P1-D100L", "P1-D100H")
 
-    # --- ロング（32bit整数）の読み書き ---
-    plc.long_write({"P1-D100": 100000})
+    # ロング（32bit整数）の読み書き
+    plc.long_write("P1-D100", 100000)
     l_val = plc.long_read("P1-D100")[0]
+
+    # ビット・ワード混在の一括読み出し（辞書形式で取得）
+    data = plc.read_mixed(["P1-M100", "P1-D100"])
+    # -> {"P1-M100": 0, "P1-D100": 100000 & 0xFFFF}
 ```
 
----
+### バックグラウンド定期ポーリング
 
-### 2. バックグラウンド定期取得（スレッド監視・自動再接続）
-
-PLCの特定アドレスをバックグラウンドスレッドで自動的に定期ポーリングし、最新値を常時保持します。
-メインスレッドは通信待ち（フリーズ）することなく、いつでも瞬時に最新データを取得できます。
+指定したアドレス群を別スレッドで定期監視し、キャッシュから最新値を参照します。ポーリング稼働中も同一接続インスタンスから安全に書き込みが可能です（内部で排他ロック制御されます）。
 
 ```python
 import time
@@ -83,101 +68,131 @@ import toyopuc
 
 plc = toyopuc.connect("192.168.1.1", 1025)
 
-# バックグラウンド定期取得を開始（1秒間隔）
-# 通信断が発生しても、バックグラウンドスレッドが自動で再接続をリトライします
+# 1.0秒間隔でバックグラウンド取得を開始
 poller = plc.start_polling(
-    addresses=["P1-M100", "P1-M108", "P1-D100"],
+    addresses=["P1-M100", "P1-D100"],
     interval=1.0,
 )
 
 try:
     while True:
-        # メイン処理側は待ち時間ゼロで最新値を取得可能
+        # キャッシュから最新値を取得
         m100 = poller.get("P1-M100")
         d100 = poller.get("P1-D100")
-        all_data = poller.get_latest()  # 全アドレスの辞書を取得
+        print(f"M100: {m100}, D100: {d100}")
 
-        print(f"最新データ: M100={m100}, D100={d100}")
-
-        # ポーリング稼働中でも、安全に書き込み可能（内部で排他ロック制御）
+        # ポーリング中も通常通り書き込み可能
         if m100 == 1:
-            plc.word_write({"P1-D100": 9999})
+            plc.word_write("P1-D100", 9999)
 
         time.sleep(1)
 finally:
-    # ポーリングの停止方法（以下のいずれでも可能）
-    plc.stop_polling(poller)  # または poller.stop() または plc.stop_polling() で全停止
-    plc.close()               # close() 時にすべてのポーラーも自動停止します
+    plc.close()  # close() 時にポーリングスレッドも停止
 ```
 
----
+## アドレスの指定記法
 
-## 対応アドレス形式
+アドレス文字列は TOYOPUC の表記規則に準拠しています。
 
-取扱説明書（Nano 2ET 取扱説明書）のアドレス仕様および資料8（Exナンバー）に準拠しています。
+- **書式**: `[プログラム番号-]デバイス記号アドレス番号[バイト指定]`
+  - **プログラム番号**（省略時は `P1`）: `P1-` / `P2-` / `P3-`
+  - **アドレス番号**: **16進数** で指定します（例: `D100` は 10進数の 256 に相当）
+  - **バイト指定**（任意）: 下位バイト `L`、上位バイト `H`
 
-| アドレス表記 | 対象デバイス | 備考 |
-|---|---|---|
-| `P1-M100` | プログラム1 内部リレー M100 | ビットデバイス（16進数指定） |
-| `P2-K050` | プログラム2 キープリレー K050 | ビットデバイス |
-| `P1-D100` | プログラム1 データレジスタ D100 | ワードデバイス（16ビット） |
-| `P1-D100L` | プログラム1 データレジスタ D100 下位バイト | バイトデバイス（8ビット） |
-| `P1-D100H` | プログラム1 データレジスタ D100 上位バイト | バイトデバイス（8ビット） |
-| `D100` | プログラム指定省略時 | デフォルトでプログラム1（P1） |
-| `P1-M1000` | PC10拡張 内部リレー M1000 | 拡張領域自動計算 |
-| `U0000` | 拡張データレジスタ U0000 | Ex No. 0x03〜 |
-| `EB0000` | 拡張ファイルレジスタ EB0000 | Ex No. 0x10〜 |
-| `GM0000` | 拡張内部リレー GM0000 | Ex No. 0x02 |
+### 主な対応デバイス
 
----
+| 種別 | デバイス記号 | 説明 |
+| :--- | :--- | :--- |
+| **基本ビット** | `P`, `K`, `V`, `TC`, `T`, `C`, `L`, `X`, `Y`, `M` | 入出力リレー、内部リレー、タイマ/カウンタ接点など |
+| **拡張ビット** | `EP`, `EK`, `EV`, `ETC`, `ET`, `EC`, `EL`, `EX`, `EY`, `EM`, `GX`, `GY`, `GM` | 拡張リレー、拡張タイマ/カウンタ接点 |
+| **基本ワード** | `D`, `B`, `S`, `N`, `R` | データレジスタ、ファイルレジスタ、特殊/現在値レジスタ |
+| **拡張ワード** | `U`, `EB`, `ES`, `EN`, `H` | 拡張データレジスタ、拡張バッファレジスタ、設定値レジスタ |
 
-## API リファレンス
 
-### 接続関数
-- `toyopuc.connect(ip: str, port: int = 1025, timeout: float = 3.0, auto_reconnect: bool = True) -> ToyopucClient`
-  PLCとのTCPコネクションを確立し、`ToyopucClient` インスタンスを返します。
+## エラーハンドリング
 
----
+通信障害やPLC側の異常応答は、`toyopuc.exceptions` 配下の例外として送出されます。
 
-### `ToyopucClient` メソッド・プロパティ一覧
+```python
+import toyopuc
+from toyopuc.exceptions import (
+    ToyopucConnectionError,
+    ToyopucResponseError,
+    ToyopucAddressError,
+)
 
-#### 読み出し系（戻り値は常に `list[int]`）
-- `bit_read(*addresses) -> list[int]`: ビット読み出し（0 または 1 のリスト）
-- `byte_read(*addresses) -> list[int]`: バイト読み出し（0〜255 のリスト）
-- `word_read(*addresses) -> list[int]`: ワード読み出し（0〜65535 のリスト）
-- `long_read(*addresses) -> list[int]`: ロング（32bit整数）読み出し（0〜4294967295 のリスト）
-- `read_mixed(addresses: Sequence[str]) -> dict[str, int]`: ビット・バイト・ワード混在一括読み出し（辞書返却）
+try:
+    with toyopuc.connect("192.168.1.1", 1025, timeout=3.0) as plc:
+        plc.word_write("P1-D100", 1234)
+except ToyopucConnectionError as e:
+    # 接続失敗、タイムアウト、通信切断
+    print(f"通信エラー: {e}")
+except ToyopucResponseError as e:
+    # PLCからの異常応答（アドレス範囲外、書き込み禁止など）
+    print(f"PLCエラー応答: {e} (RC=0x{e.response_code:02X})")
+except ToyopucAddressError as e:
+    # 不正なアドレス形式
+    print(f"アドレス指定エラー: {e}")
+```
 
-#### 書き込み系（引数は辞書形式 `{"アドレス": 値}`）
-- `bit_write(data, value=None) -> int`: ビット書き込み（書き込み件数を返却）
-- `byte_write(data, value=None) -> int`: バイト書き込み（書き込み件数を返却）
-- `word_write(data, value=None) -> int`: ワード書き込み（書き込み件数を返却）
-- `long_write(data, value=None) -> int`: ロング（32bit整数）書き込み（書き込み件数を返却）
+## APIリファレンス
 
-#### ポーリング制御
-- `start_polling(addresses: Sequence[str], interval: float = 1.0) -> BackgroundPoller`: バックグラウンド定期取得を開始
-- `stop_polling(poller: BackgroundPoller | None = None) -> None`: 指定したポーラー（または全ポーラー）を停止
+### `toyopuc.connect()`
+```python
+toyopuc.connect(
+    ip: str,
+    port: int = 1025,
+    timeout: float = 3.0,
+    auto_reconnect: bool = True
+) -> ToyopucClient
+```
+PLCにTCP接続し、`ToyopucClient` のインスタンスを返します。
 
-#### コネクション管理
-- `connect() -> ToyopucClient`: 再接続を実行
-- `disconnect() -> None`: ソケット切断（`close()` のエイリアス）
-- `close() -> None`: 全ポーラーを停止し、ソケットを切断
-- `is_connected -> bool`: 現在ソケットが接続中かどうか
+### `ToyopucClient`
+PLCとの通信を管理するクライアントクラスです。
 
----
+#### 読み出しメソッド
+| メソッド | 引数 | 戻り値 | 説明 |
+| :--- | :--- | :--- | :--- |
+| `bit_read(*addresses)` | 可変長引数またはリスト | `list[int]` | ビット読み出し（0 または 1） |
+| `byte_read(*addresses)` | 可変長引数またはリスト | `list[int]` | バイト読み出し（0〜255） |
+| `word_read(*addresses)` | 可変長引数またはリスト | `list[int]` | ワード読み出し（0〜65535） |
+| `long_read(*addresses)` | 可変長引数またはリスト | `list[int]` | 32bit整数読み出し（0〜4294967295） |
+| `read_mixed(addresses)` | `Sequence[str]` | `dict[str, int]` | ビット・ワード混在読み出し |
 
-### `BackgroundPoller` メソッド・プロパティ一覧
+※読み出しメソッドの戻り値は、指定アドレス順の値リストです。単一アドレスの場合は `[0]` で値を取得します。
 
-- `get(address: str, default: Any = None) -> int | None`: 指定アドレスの最新キャッシュ値を即座に取得
-- `get_latest() -> dict[str, int]`: 全監視アドレスの最新データ辞書のコピーを取得
-- `stop(timeout: float = 3.0) -> None`: ポーリングスレッドを停止
-- `start() -> None`: 停止中のポーリングスレッドを再開
-- `set_addresses(addresses: Sequence[str]) -> None`: 監視対象アドレスリストを動的に変更
-- `set_interval(interval: float) -> None`: ポーリング間隔（秒）を動的に変更
-- `is_running -> bool`: ポーリングスレッドが稼働中かどうか
-- `last_error -> Exception | None`: 直近に発生した通信エラー（正常時は `None`）
+#### 書き込みメソッド
+各メソッドとも、単一引数 `(address, value)` または辞書形式 `{"address": value, ...}` の両方に対応しています。
 
----
+| メソッド | 引数 | 戻り値 | 説明 |
+| :--- | :--- | :--- | :--- |
+| `bit_write(data, value=None)` | `dict` または `(str, int\|bool)` | `int` | ビット書き込み（書き込み点数を返却） |
+| `byte_write(data, value=None)` | `dict` または `(str, int)` | `int` | バイト書き込み |
+| `word_write(data, value=None)` | `dict` または `(str, int)` | `int` | ワード書き込み |
+| `long_write(data, value=None)` | `dict` または `(str, int)` | `int` | 32bit整数書き込み |
+
+#### ポーリング・接続制御
+| メソッド / プロパティ | 説明 |
+| :--- | :--- |
+| `start_polling(addresses, interval=1.0)` | バックグラウンド定期取得を開始し、`BackgroundPoller` を返却 |
+| `stop_polling(poller=None)` | 指定したポーラー（省略時は全ポーラー）を停止 |
+| `is_connected` | ソケットの接続状態（`bool`） |
+| `connect()` | 再接続を実行 |
+| `close()` / `disconnect()` | 全ポーラーを停止し、ソケットを切断 |
+
+### `BackgroundPoller`
+バックグラウンド定期ポーリングを制御・参照するクラスです。
+
+| メソッド / プロパティ | 説明 |
+| :--- | :--- |
+| `get(address, default=None)` | 指定アドレスの最新値を取得 |
+| `get_latest()` | 全対象アドレスの最新値を辞書形式で取得 |
+| `start()` / `stop(timeout=3.0)` | ポーリングスレッドの再開 / 停止 |
+| `set_addresses(addresses)` | 対象アドレスリストを変更 |
+| `set_interval(interval)` | ポーリング間隔（秒）を変更 |
+| `is_running` | ポーリングスレッドの稼働状態（`bool`） |
+| `last_error` | 直近で発生した例外オブジェクト（正常時は `None`） |
 
 ## ライセンス
 
